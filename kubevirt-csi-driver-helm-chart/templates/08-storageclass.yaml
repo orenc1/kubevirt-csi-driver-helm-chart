@@ -1,0 +1,14 @@
+{{- if .Values.storageClass.create }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storageClass.name }}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: {{ .Values.storageClass.isDefault | quote }}
+provisioner: csi.kubevirt.io
+parameters:
+  infraStorageClassName: {{ .Values.infra.storageClassName }}
+  bus: scsi
+reclaimPolicy: Delete
+volumeBindingMode: {{ .Values.storageClass.volumeBindingMode }}
+{{- end }}

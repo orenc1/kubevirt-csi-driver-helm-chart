@@ -1,0 +1,62 @@
+# ------------------------------------------------------------------
+# Infrastructure Cluster Settings
+# ------------------------------------------------------------------
+infra:
+  # Namespace in the infra cluster where the VMs live
+  namespace: "nested-cluster"
+  # StorageClass in the infra cluster
+  storageClassName: "ocs-storagecluster-ceph-rbd-virtualization"
+  labels: "csi-driver/cluster=tenant"
+  # Kubeconfig content (or pass via secrets.yaml)
+  kubeconfig: ""
+
+# ------------------------------------------------------------------
+# Node <-> VM Mapping
+# ------------------------------------------------------------------
+# The Job uses this to annotate tenant nodes with infra VM name.
+nodeMapping:
+  # "Tenant Node Name": "Infra VM Name"
+  "worker-0": "worker-0"
+  "worker-1": "worker-1"
+  "worker-2": "worker-2"
+  "master-0": "master-0"
+  "master-1": "master-1"
+  "master-2": "master-2"
+
+# ------------------------------------------------------------------
+# Images
+# ------------------------------------------------------------------
+images:
+  driver:
+    repository: quay.io/kubevirt/kubevirt-csi-driver
+    tag: latest
+    pullPolicy: Always
+  # Helper image for the annotation job
+  kubectl:
+    repository: bitnami/kubectl
+    tag: latest
+  # Sidecars
+  provisioner:
+    repository: quay.io/openshift/origin-csi-external-provisioner
+    tag: latest
+  attacher:
+    repository: quay.io/openshift/origin-csi-external-attacher
+    tag: latest
+  snapshotter:
+    repository: k8s.gcr.io/sig-storage/csi-snapshotter
+    tag: v4.2.1
+  resizer:
+    repository: registry.k8s.io/sig-storage/csi-resizer
+    tag: v1.13.1
+  nodeDriverRegistrar:
+    repository: registry.k8s.io/sig-storage/csi-node-driver-registrar
+    tag: v2.8.0
+
+# ------------------------------------------------------------------
+# Storage Class
+# ------------------------------------------------------------------
+storageClass:
+  create: true
+  name: kubevirt-csi
+  isDefault: true
+  volumeBindingMode: Immediate

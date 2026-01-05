@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubevirt-csi-node-annotator
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      serviceAccountName: node-annotator-sa
+      restartPolicy: OnFailure
+      containers:
+        - name: annotator
+          image: "{{ .Values.images.kubectl.repository }}:{{ .Values.images.kubectl.tag }}"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              echo "Starting Node Annotation Job..."
+              INFRA_NS="{{ .Values.infra.namespace }}"
+
+              # Loop through the map provided in values.yaml
+              {{- range $nodeName, $vmName := .Values.nodeMapping }}
+              echo "------------------------------------------------"
+              echo "Processing Mapping: {{ $nodeName }} -> {{ $vmName }}"
+
+              # Wait for node to exist (retry loop)
+              attempt=0
+              while ! kubectl get node {{ $nodeName }} >/dev/null 2>&1; do
+                if [ $attempt -gt 10 ]; then
+                  echo "Error: Node {{ $nodeName }} not found in Tenant cluster."
+                  exit 1
+                fi
+                echo "Waiting for node {{ $nodeName }} to appear..."
+                sleep 5
+                attempt=$((attempt+1))
+              done
+
+              # Apply the Critical Annotations
+              echo "Annotating {{ $nodeName }} with Infra VM details..."
+
+              # 1. VM Name
+              kubectl annotate node {{ $nodeName }} csi.kubevirt.io/infra-vm-name={{ $vmName }} --overwrite
+
+              # 2. VM Namespace
+              kubectl annotate node {{ $nodeName }} csi.kubevirt.io/infra-vm-namespace=$INFRA_NS --overwrite
+
+              echo "Success: {{ $nodeName }} annotated."
+              {{- end }}
+
+              echo "------------------------------------------------"
+              echo "All nodes processed successfully."

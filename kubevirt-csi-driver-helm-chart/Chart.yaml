@@ -1,0 +1,6 @@
+apiVersion: v2
+name: kubevirt-csi-driver
+description: KubeVirt CSI Driver for non-HCP nested clusters
+type: application
+version: 0.1.0
+appVersion: "v0.4.1"
