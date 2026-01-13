@@ -1,11 +1,16 @@
 apiVersion: v2
 name: kubevirt-csi-driver
 description: KubeVirt CSI Driver for non-HCP nested clusters
-source: https://github.com/orenc1/kubevirt-csi-driver-helm-chart
-homepage: https://github.com/orenc1/kubevirt-csi-driver-helm-chart
-provider: Red Hat, Inc.
-maintainer: ocohen@redhat.com
+home: https://github.com/orenc1/kubevirt-csi-driver-helm-chart
+sources:
+  - https://github.com/orenc1/kubevirt-csi-driver-helm-chart
+maintainers:
+  - name: Oren Cohen
+    email: ocohen@redhat.com
 
 type: application
 version: 0.1.1
 appVersion: "v0.4.1"
+annotations:
+  charts.openshift.io/provider: "Red Hat, Inc."
+  charts.openshift.io/name: "KubeVirt CSI Driver"
