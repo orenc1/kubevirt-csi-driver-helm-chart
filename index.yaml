@@ -3,12 +3,12 @@ entries:
   kubevirt-csi-driver:
   - apiVersion: v2
     appVersion: v0.4.1
-    created: "2026-01-05T11:00:06.646937262+02:00"
+    created: "2026-01-13T15:10:13.259303203+02:00"
     description: KubeVirt CSI Driver for non-HCP nested clusters
-    digest: 189db4063d53c0fe30a7800be006d419ab53d93394e16a5c9b4fa006c39d3770
+    digest: 7e23f3aaa458c84d8040a0566a282e0e60a9ab7c04d7bb2c7450bb0e21b63556
     name: kubevirt-csi-driver
     type: application
     urls:
-    - kubevirt-csi-driver-0.1.0.tgz
-    version: 0.1.0
-generated: "2026-01-05T11:00:06.6464506+02:00"
+    - kubevirt-csi-driver-0.1.1.tgz
+    version: 0.1.1
+generated: "2026-01-13T15:10:13.258880002+02:00"
