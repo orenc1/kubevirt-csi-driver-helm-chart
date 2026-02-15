@@ -33,7 +33,7 @@ images:
     pullPolicy: Always
   # Helper image for the annotation job
   kubectl:
-    repository: bitnami/kubectl
+    repository: docker.io/bitnami/kubectl
     tag: latest
   # Sidecars
   provisioner:

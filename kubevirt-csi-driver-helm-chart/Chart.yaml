@@ -9,7 +9,7 @@ maintainers:
     email: ocohen@redhat.com
 
 type: application
-version: 0.1.1
+version: 0.1.2
 appVersion: "v0.4.1"
 annotations:
   charts.openshift.io/provider: "Red Hat, Inc."
