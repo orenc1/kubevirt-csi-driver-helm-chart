@@ -1,0 +1,36 @@
+{{- if .Values.useDownstreamImages }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: image-swap-sa
+  namespace: {{ .Release.Namespace }}
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: image-swap-role
+rules:
+  - apiGroups: ["config.openshift.io"]
+    resources: ["clusterversions"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["pull-secret"]
+    verbs: ["get"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: image-swap-binding
+subjects:
+  - kind: ServiceAccount
+    name: image-swap-sa
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: image-swap-role
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

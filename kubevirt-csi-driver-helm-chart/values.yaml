@@ -24,9 +24,26 @@ nodeMapping:
   "master-2": "master-2"
 
 # ------------------------------------------------------------------
+# Downstream Images
+# ------------------------------------------------------------------
+# When true, a post-install/post-upgrade hook Job replaces sidecar
+# images with pullspecs from the OCP release payload (ClusterVersion),
+# and a CronJob periodically checks for image updates.
+useDownstreamImages: true
+
+# Schedule for the image-sync CronJob (cron expression).
+# Only used when useDownstreamImages is true.
+imageSync:
+  schedule: "0 0 * * *"
+
+# ------------------------------------------------------------------
 # Images
 # ------------------------------------------------------------------
 images:
+  # OpenShift CLI image (used by the image-swap hook Job)
+  cli:
+    repository: registry.redhat.io/openshift4/ose-cli
+    tag: latest
   driver:
     repository: quay.io/kubevirt/kubevirt-csi-driver
     tag: latest

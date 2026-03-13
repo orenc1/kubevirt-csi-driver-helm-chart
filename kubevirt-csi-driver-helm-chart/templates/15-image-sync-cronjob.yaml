@@ -1,0 +1,96 @@
+{{- if .Values.useDownstreamImages }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kubevirt-csi-image-sync
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.imageSync.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: image-swap-sa
+          restartPolicy: OnFailure
+          containers:
+            - name: image-sync
+              image: "{{ .Values.images.cli.repository }}:{{ .Values.images.cli.tag }}"
+              command: ["/bin/bash", "-c"]
+              args:
+                - |
+                  set -euo pipefail
+                  NAMESPACE="{{ .Release.Namespace }}"
+                  PULL_SECRET_PATH="/tmp/pull-secret/.dockerconfigjson"
+
+                  echo "=== OCP Image Sync Check ==="
+                  echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+                  # --- Extract cluster pull secret for registry auth ---
+                  mkdir -p /tmp/pull-secret
+                  oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > "$PULL_SECRET_PATH"
+
+                  # --- Get release payload from ClusterVersion ---
+                  PAYLOAD=$(oc get clusterversion version -o jsonpath='{.status.desired.image}')
+                  if [ -z "$PAYLOAD" ]; then
+                    echo "ERROR: Could not determine release payload from ClusterVersion."
+                    exit 1
+                  fi
+                  echo "Release payload: $PAYLOAD"
+
+                  # --- Container -> OCP release payload image name mapping ---
+                  # Format: "container_name:payload_name:resource_type:resource_name"
+                  MAPPINGS=(
+                    "kubevirt-csi-driver:kubevirt-csi-driver:deployment:kubevirt-csi-controller"
+                    "csi-driver:kubevirt-csi-driver:daemonset:kubevirt-csi-node"
+                    "csi-provisioner:csi-external-provisioner:deployment:kubevirt-csi-controller"
+                    "csi-attacher:csi-external-attacher:deployment:kubevirt-csi-controller"
+                    "csi-snapshotter:csi-external-snapshotter:deployment:kubevirt-csi-controller"
+                    "csi-resizer:csi-external-resizer:deployment:kubevirt-csi-controller"
+                    "csi-liveness-probe:csi-livenessprobe:deployment:kubevirt-csi-controller"
+                    "csi-liveness-probe:csi-livenessprobe:daemonset:kubevirt-csi-node"
+                    "csi-node-driver-registrar:csi-node-driver-registrar:daemonset:kubevirt-csi-node"
+                  )
+
+                  UPDATED=0
+                  FAILED=0
+
+                  for MAPPING in "${MAPPINGS[@]}"; do
+                    IFS=':' read -r CONTAINER PAYLOAD_NAME RES_TYPE RES_NAME <<< "$MAPPING"
+
+                    DESIRED=$(oc adm release info "$PAYLOAD" --image-for="$PAYLOAD_NAME" --registry-config="$PULL_SECRET_PATH" 2>/dev/null || true)
+                    if [ -z "$DESIRED" ]; then
+                      echo "WARNING: '$PAYLOAD_NAME' not found in release payload. Skipping."
+                      continue
+                    fi
+
+                    CURRENT=$(oc get "$RES_TYPE/$RES_NAME" -n "$NAMESPACE" \
+                      -o jsonpath="{.spec.template.spec.containers[?(@.name=='$CONTAINER')].image}" 2>/dev/null || true)
+
+                    if [ "$CURRENT" = "$DESIRED" ]; then
+                      echo "OK: $RES_TYPE/$RES_NAME container=$CONTAINER is up to date."
+                      continue
+                    fi
+
+                    echo "UPDATE: $RES_TYPE/$RES_NAME container=$CONTAINER"
+                    echo "  Current: ${CURRENT:-<not found>}"
+                    echo "  Desired: $DESIRED"
+
+                    if ! oc set image "$RES_TYPE/$RES_NAME" "$CONTAINER=$DESIRED" -n "$NAMESPACE"; then
+                      echo "ERROR: Failed to patch $RES_TYPE/$RES_NAME container $CONTAINER."
+                      FAILED=1
+                      continue
+                    fi
+                    UPDATED=$((UPDATED + 1))
+                  done
+
+                  echo "================================================"
+                  echo "Images updated: $UPDATED"
+                  if [ "$FAILED" -ne 0 ]; then
+                    echo "Image sync completed with errors."
+                    exit 1
+                  fi
+                  echo "Image sync completed successfully."
+{{- end }}

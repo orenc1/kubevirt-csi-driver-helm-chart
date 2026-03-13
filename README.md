@@ -218,9 +218,27 @@ nodeMapping:
   "master-2": "master-2"
 
 # ------------------------------------------------------------------
+# Downstream Images
+# ------------------------------------------------------------------
+# When true, a post-install/post-upgrade hook Job replaces sidecar
+# images with pullspecs from the OCP release payload (ClusterVersion),
+# and a CronJob periodically checks for image updates.
+useDownstreamImages: true
+
+# Schedule for the image-sync CronJob (cron expression).
+# Only used when useDownstreamImages is true.
+imageSync:
+  schedule: "0 0 * * *"
+
+# ------------------------------------------------------------------
 # Images
 # ------------------------------------------------------------------
 images:
+  # OpenShift CLI image (used by the image-swap hook Job and CronJob)
+  cli:
+    repository: registry.redhat.io/openshift4/ose-cli
+    tag: latest
+
   # KubeVirt CSI Driver image
   driver:
     repository: quay.io/kubevirt/kubevirt-csi-driver
@@ -282,6 +300,10 @@ storageClass:
 | `storageClass.name` | Name of the StorageClass | `kubevirt-csi` |
 | `storageClass.isDefault` | Set as default StorageClass | `true` |
 | `storageClass.volumeBindingMode` | Volume binding mode | `Immediate` |
+| `useDownstreamImages` | Replace images with OCP release payload pullspecs | `true` |
+| `imageSync.schedule` | Cron schedule for the image-sync CronJob | `0 0 * * *` (daily at midnight) |
+| `images.cli.repository` | OpenShift CLI image for image-swap/sync Jobs | `registry.redhat.io/openshift4/ose-cli` |
+| `images.cli.tag` | OpenShift CLI image tag | `latest` |
 
 #### Finding Your Node-to-VM Mapping
 
@@ -358,6 +380,121 @@ The CSI driver will:
 2. Wait for the DataVolume to be ready
 3. Hot-plug the disk to the appropriate VM node
 4. Present the disk as a PersistentVolume in the nested cluster
+
+---
+
+## Downstream Image Swap (OCP Release Payload)
+
+By default (`useDownstreamImages: true`), the chart runs a post-install/post-upgrade hook Job that automatically replaces all upstream sidecar images with the digest-pinned pullspecs from the OCP release payload of the running cluster. A CronJob also runs on a configurable schedule (daily by default) to keep images in sync as the cluster is upgraded or z-stream patches ship new digests.
+
+### How It Works
+
+1. A **post-install/post-upgrade** Helm hook Job runs after the Deployment and DaemonSet are created.
+2. The Job reads the release payload image from the `ClusterVersion` custom resource.
+3. It extracts the cluster pull secret from `openshift-config/pull-secret` for registry authentication.
+4. For each container, it calls `oc adm release info --image-for=<name>` to resolve the downstream pullspec.
+5. It patches the Deployment and DaemonSet in-place with `oc set image`.
+6. A **CronJob** repeats this check on a schedule, only patching containers whose images differ from the current release payload.
+
+The following images are replaced:
+
+| Container | OCP Payload Name |
+|-----------|-----------------|
+| `kubevirt-csi-driver` | `kubevirt-csi-driver` |
+| `csi-driver` (daemonset) | `kubevirt-csi-driver` |
+| `csi-provisioner` | `csi-external-provisioner` |
+| `csi-attacher` | `csi-external-attacher` |
+| `csi-snapshotter` | `csi-external-snapshotter` |
+| `csi-resizer` | `csi-external-resizer` |
+| `csi-liveness-probe` | `csi-livenessprobe` |
+| `csi-node-driver-registrar` | `csi-node-driver-registrar` |
+
+If a payload name is not found (e.g., on older OCP versions), the container is skipped with a warning.
+
+### Disabling the Image Swap
+
+To use the upstream images defined in `values.yaml` instead:
+
+```bash
+helm upgrade --install kubevirt-csi ./kubevirt-csi-driver-helm-chart \
+  --set useDownstreamImages=false \
+  ...
+```
+
+### Disconnected / Air-Gapped Environments
+
+In disconnected clusters, the OCP release payload is typically mirrored to a local registry using `oc mirror` or `oc adm release mirror`. The image-swap Job works transparently in this scenario because:
+
+- The `ClusterVersion` CR already points to the **mirrored** payload image in the local registry.
+- `oc adm release info` respects the cluster's `ImageDigestMirrorSet` / `ImageTagMirrorSet` (or legacy `ImageContentSourcePolicy`) for resolving pullspecs.
+- The cluster pull secret (`openshift-config/pull-secret`) is extracted by the Job and includes credentials for the local mirror registry.
+
+No additional configuration is required. The resolved pullspecs will point to the mirrored images automatically.
+
+If you need to use a custom `ose-cli` image from your local mirror, override it in `values.yaml`:
+
+```yaml
+images:
+  cli:
+    repository: my-registry.example.com/openshift4/ose-cli
+    tag: v4.21
+```
+
+### Verifying the Image Swap
+
+After deployment, verify that the images were replaced:
+
+```bash
+# Check controller deployment images
+oc get deployment kubevirt-csi-controller -n kubevirt-csi-driver \
+  -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\t"}{.image}{"\n"}{end}'
+
+# Check node daemonset images
+oc get daemonset kubevirt-csi-node -n kubevirt-csi-driver \
+  -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\t"}{.image}{"\n"}{end}'
+```
+
+Images should show `quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:...` digest-pinned references (or their mirrored equivalents in disconnected environments).
+
+### Checking the Image Swap Job Logs
+
+```bash
+oc logs job/kubevirt-csi-image-swap -n kubevirt-csi-driver
+```
+
+### Periodic Image Sync (CronJob)
+
+In addition to the one-time image swap at install/upgrade, a **CronJob** (`kubevirt-csi-image-sync`) runs on a configurable schedule to keep images aligned with the current OCP release payload. This is useful when:
+
+- The cluster is upgraded to a new OCP version and images in the release payload change.
+- A z-stream (patch) update ships new image digests without a full cluster upgrade.
+
+The CronJob compares each container's current image against the desired pullspec from the release payload and **only patches containers whose images have actually changed**, avoiding unnecessary rollouts.
+
+By default the CronJob runs daily at midnight. To customize the schedule:
+
+```yaml
+imageSync:
+  schedule: "0 */6 * * *"   # every 6 hours
+```
+
+Or via the command line:
+
+```bash
+helm upgrade --install kubevirt-csi ./kubevirt-csi-driver-helm-chart \
+  --set imageSync.schedule="0 */12 * * *" \
+  ...
+```
+
+#### Checking Image Sync Logs
+
+```bash
+# List recent CronJob runs
+oc get jobs -n kubevirt-csi-driver -l job-name=kubevirt-csi-image-sync
+
+# View logs from the latest run
+oc logs job/$(oc get jobs -n kubevirt-csi-driver --sort-by=.metadata.creationTimestamp -o name | grep image-sync | tail -1 | cut -d/ -f2) -n kubevirt-csi-driver
+```
 
 ---
 

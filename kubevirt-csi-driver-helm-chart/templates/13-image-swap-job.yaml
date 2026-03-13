@@ -1,0 +1,84 @@
+{{- if .Values.useDownstreamImages }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kubevirt-csi-image-swap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      serviceAccountName: image-swap-sa
+      restartPolicy: OnFailure
+      containers:
+        - name: image-swap
+          image: "{{ .Values.images.cli.repository }}:{{ .Values.images.cli.tag }}"
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              NAMESPACE="{{ .Release.Namespace }}"
+              PULL_SECRET_PATH="/tmp/pull-secret/.dockerconfigjson"
+
+              echo "=== OCP Downstream Image Swap ==="
+
+              # --- Extract cluster pull secret for registry auth ---
+              echo "Extracting cluster pull secret..."
+              mkdir -p /tmp/pull-secret
+              oc get secret pull-secret -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > "$PULL_SECRET_PATH"
+
+              # --- Get release payload from ClusterVersion ---
+              PAYLOAD=$(oc get clusterversion version -o jsonpath='{.status.desired.image}')
+              if [ -z "$PAYLOAD" ]; then
+                echo "ERROR: Could not determine release payload from ClusterVersion."
+                exit 1
+              fi
+              echo "Release payload: $PAYLOAD"
+
+              # --- Container -> OCP release payload image name mapping ---
+              # Format: "container_name:payload_name:resource_type:resource_name"
+              MAPPINGS=(
+                "kubevirt-csi-driver:kubevirt-csi-driver:deployment:kubevirt-csi-controller"
+                "csi-driver:kubevirt-csi-driver:daemonset:kubevirt-csi-node"
+                "csi-provisioner:csi-external-provisioner:deployment:kubevirt-csi-controller"
+                "csi-attacher:csi-external-attacher:deployment:kubevirt-csi-controller"
+                "csi-snapshotter:csi-external-snapshotter:deployment:kubevirt-csi-controller"
+                "csi-resizer:csi-external-resizer:deployment:kubevirt-csi-controller"
+                "csi-liveness-probe:csi-livenessprobe:deployment:kubevirt-csi-controller"
+                "csi-liveness-probe:csi-livenessprobe:daemonset:kubevirt-csi-node"
+                "csi-node-driver-registrar:csi-node-driver-registrar:daemonset:kubevirt-csi-node"
+              )
+
+              FAILED=0
+
+              for MAPPING in "${MAPPINGS[@]}"; do
+                IFS=':' read -r CONTAINER PAYLOAD_NAME RES_TYPE RES_NAME <<< "$MAPPING"
+
+                echo "------------------------------------------------"
+                echo "Looking up payload image: $PAYLOAD_NAME"
+
+                IMAGE=$(oc adm release info "$PAYLOAD" --image-for="$PAYLOAD_NAME" --registry-config="$PULL_SECRET_PATH" 2>/dev/null || true)
+                if [ -z "$IMAGE" ]; then
+                  echo "WARNING: Image '$PAYLOAD_NAME' not found in release payload. Skipping $RES_TYPE/$RES_NAME container $CONTAINER."
+                  continue
+                fi
+
+                echo "  Pullspec: $IMAGE"
+                echo "  Patching $RES_TYPE/$RES_NAME container=$CONTAINER"
+
+                if ! oc set image "$RES_TYPE/$RES_NAME" "$CONTAINER=$IMAGE" -n "$NAMESPACE"; then
+                  echo "ERROR: Failed to patch $RES_TYPE/$RES_NAME container $CONTAINER."
+                  FAILED=1
+                fi
+              done
+
+              echo "================================================"
+              if [ "$FAILED" -ne 0 ]; then
+                echo "Image swap completed with errors."
+                exit 1
+              fi
+              echo "Image swap completed successfully."
+{{- end }}
