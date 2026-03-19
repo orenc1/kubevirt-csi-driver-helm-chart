@@ -59,6 +59,9 @@ images:
   attacher:
     repository: quay.io/openshift/origin-csi-external-attacher
     tag: latest
+  livenessprobe:
+    repository: quay.io/openshift/origin-csi-livenessprobe
+    tag: latest
   snapshotter:
     repository: k8s.gcr.io/sig-storage/csi-snapshotter
     tag: v4.2.1

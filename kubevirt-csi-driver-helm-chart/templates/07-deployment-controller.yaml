@@ -110,7 +110,7 @@ spec:
               memory: 50Mi
               cpu: 10m
         - name: csi-liveness-probe
-          image: quay.io/openshift/origin-csi-livenessprobe:latest
+          image: "{{ .Values.images.livenessprobe.repository }}:{{ .Values.images.livenessprobe.tag }}"
           args:
             - "--csi-address=/csi/csi.sock"
             - "--probe-timeout=3s"
